@@ -104,22 +104,35 @@ npm install -g ai-test-generator
 ai-test-generator https://example.com
 ```
 
-### 2. Configure API Key
+### 2. Get an Anthropic API Key
+
+1. Go to **[console.anthropic.com](https://console.anthropic.com)** and sign in (or create a free account).
+2. Navigate to **API Keys** in the left sidebar and click **Create Key**.
+3. Copy the key — it starts with `sk-ant-...`. You won't be able to see it again.
+
+> **Note:** New accounts include free credits. The Sonnet 4.6 model costs ~$3 per million input tokens — generating tests for a typical page uses well under 10 000 tokens (< $0.03).
+
+### 3. Set the API Key
 
 ```bash
+# Copy the template
 cp .env.example .env
-# Edit .env and set your ANTHROPIC_API_KEY
+
+# Open .env and replace "your_key_here" with your actual key:
+#   ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-Get your key at [console.anthropic.com](https://console.anthropic.com).
+The `.env` file is git-ignored — your key never leaves your machine.
 
-### 3. Install Playwright Browsers
+> **Running without a key (mock mode):** The tool works out-of-the-box without any API key. When no key is present, it generates a realistic test file locally using the crawled page structure — no network calls to Anthropic. Mock mode is the default for CI and demos.
+
+### 4. Install Playwright Browsers
 
 ```bash
 npx playwright install chromium
 ```
 
-### 4. Generate Tests
+### 5. Generate Tests
 
 ```bash
 # Full pipeline: crawl → generate → run

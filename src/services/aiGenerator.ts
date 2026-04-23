@@ -1,49 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { PageData } from './pageCrawler';
-
-// Static system prompt — cached via cache_control to avoid re-tokenizing
-// on every request (breaks even after 2 requests at Sonnet 4.6 pricing).
-const SYSTEM_PROMPT = `You are an expert QA automation engineer specializing in Playwright TypeScript testing.
-Your task: analyze a webpage's structure and generate a comprehensive, production-ready Playwright test suite.
-
-## Test Structure
-- Import: \`import { test, expect } from '@playwright/test';\`
-- Use \`test.describe\` blocks with clear, meaningful names
-- Use \`test.beforeEach\` for navigation setup
-- Group by feature: Loading, Content, Forms, Navigation, etc.
-
-## Selector Priority (most → least preferred)
-1. \`data-testid\`: \`page.locator('[data-testid="login-btn"]')\`
-2. ARIA role + name: \`page.getByRole('button', { name: 'Log In' })\`
-3. Label: \`page.getByLabel('Email address')\`
-4. Placeholder: \`page.getByPlaceholder('Enter your email')\`
-5. Text: \`page.getByText('Submit')\`
-6. CSS last resort: \`page.locator('.submit-button')\`
-
-## Coverage Requirements
-1. **Page Load** — correct URL, title, and key visible elements
-2. **Content Integrity** — headings, main content present
-3. **Interactive Elements** — all buttons, links clickable
-4. **Forms** (for each form found):
-   - Happy path: valid data → success
-   - Required fields: empty submit → error messages
-   - Field validation: wrong format → inline errors
-5. **Auth flows** (if login/register detected): valid + invalid credentials
-6. **Navigation** — internal links resolve, breadcrumbs work
-7. **Search** (if present) — input, submit, results appear
-
-## Code Quality Rules
-- All tests are \`async\`
-- Use \`await\` for all Playwright actions
-- Add \`expect(page).toHaveURL()\` after navigations
-- Use \`toBeVisible()\`, \`toHaveText()\`, \`toHaveValue()\`, \`toBeEnabled()\` appropriately
-- Add a brief inline comment only when the assertion is non-obvious
-- Do NOT add error handling — Playwright auto-retries assertions
-- Do NOT use \`page.waitForTimeout()\` — use \`waitForSelector\` or assertion retries
-
-## Output
-Return ONLY raw TypeScript code. No markdown fences, no explanations, no prose.
-Start directly with: import { test, expect } from '@playwright/test';`;
+import type { PageData, FormField } from './pageCrawler';
 
 export interface GenerationResult {
   code: string;
@@ -53,153 +8,210 @@ export interface GenerationResult {
   cacheWriteTokens: number;
 }
 
+/**
+ * Generates Playwright tests from crawled page data.
+ *
+ * MOCK MODE: streams a locally-built test file to demonstrate the full pipeline
+ * without making real API calls. Swap this implementation for the Anthropic SDK
+ * version (see aiGenerator.real.ts.example) once you have an API key.
+ */
 export async function generateTests(
   pageData: PageData,
   onChunk: (text: string) => void
 ): Promise<GenerationResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'ANTHROPIC_API_KEY is not set. Create a .env file from .env.example.'
-    );
+  const code = buildMockTest(pageData);
+
+  // Simulate SSE streaming — emit realistic ~45-char chunks with small delays
+  const CHUNK_SIZE = 45;
+  for (let i = 0; i < code.length; i += CHUNK_SIZE) {
+    onChunk(code.slice(i, i + CHUNK_SIZE));
+    await delay(10);
   }
-
-  // claude-sonnet-4-20250514 is deprecated (retires 2026-06-15).
-  // claude-sonnet-4-6 is the current recommended alias.
-  const model = process.env.AI_MODEL ?? 'claude-sonnet-4-6';
-  const maxTokens = parseInt(process.env.MAX_TOKENS ?? '8000', 10);
-
-  const client = new Anthropic({ apiKey });
-
-  const userContent = buildUserPrompt(pageData);
-
-  const stream = client.messages.stream({
-    model,
-    max_tokens: maxTokens,
-    system: [
-      {
-        type: 'text',
-        text: SYSTEM_PROMPT,
-        // Cache the static system prompt — saves ~$0.003/request after first call
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
-    messages: [
-      {
-        role: 'user',
-        content: userContent,
-      },
-    ],
-  });
-
-  let fullText = '';
-
-  for await (const event of stream) {
-    if (
-      event.type === 'content_block_delta' &&
-      event.delta.type === 'text_delta'
-    ) {
-      onChunk(event.delta.text);
-      fullText += event.delta.text;
-    }
-  }
-
-  const finalMessage = await stream.finalMessage();
-  const usage = finalMessage.usage as Anthropic.Usage & {
-    cache_read_input_tokens?: number;
-    cache_creation_input_tokens?: number;
-  };
 
   return {
-    code: fullText,
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    code,
+    inputTokens: Math.round(code.length / 4) + 380,
+    outputTokens: Math.round(code.length / 4),
+    cacheReadTokens: 380, // simulated cache hit on static system prompt
+    cacheWriteTokens: 0,
   };
 }
 
-function buildUserPrompt(pageData: PageData): string {
-  const lines: string[] = [
-    `Analyze this webpage and generate comprehensive Playwright tests.`,
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── Mock test builder ────────────────────────────────────────────────────────
+
+function buildMockTest(pageData: PageData): string {
+  const url = pageData.finalUrl || pageData.url;
+  const label = pageData.title || new URL(url).hostname;
+
+  const blocks: string[] = [
+    `import { test, expect } from '@playwright/test';`,
     ``,
-    `## Target URL`,
-    pageData.finalUrl,
+    `// Generated by ai-test-generator (mock mode — no real API call)`,
+    `// Target: ${url}`,
     ``,
-    `## Page Metadata`,
-    `Title: ${pageData.title}`,
-    `Description: ${pageData.description || '(none)'}`,
+    `test.describe('${escStr(label)}', () => {`,
+    `  test.beforeEach(async ({ page }) => {`,
+    `    await page.goto('${url}');`,
+    `  });`,
     ``,
+    pageLoadBlock(pageData),
   ];
 
-  if (pageData.headings.length > 0) {
-    lines.push('## Headings');
-    for (const h of pageData.headings) {
-      lines.push(`  H${h.level}: ${h.text}`);
-    }
-    lines.push('');
+  if (pageData.hasAuth && pageData.forms.length > 0) {
+    blocks.push(authBlock(pageData));
   }
 
-  if (pageData.forms.length > 0) {
-    lines.push('## Forms');
-    for (const form of pageData.forms) {
-      lines.push(`  Form (id="${form.id}", method=${form.method}, action="${form.action}")`);
-      for (const f of form.fields) {
-        const parts = [
-          `type=${f.type}`,
-          f.name ? `name="${f.name}"` : '',
-          f.id ? `id="${f.id}"` : '',
-          f.placeholder ? `placeholder="${f.placeholder}"` : '',
-          f.label ? `label="${f.label}"` : '',
-          f.testId ? `data-testid="${f.testId}"` : '',
-          f.required ? 'required' : '',
-        ].filter(Boolean);
-        lines.push(`    <${f.tag} ${parts.join(', ')}>`);
-      }
-      for (const btn of form.submitButtons) {
-        lines.push(
-          `    <button type="${btn.type}"${btn.testId ? ` data-testid="${btn.testId}"` : ''}>${btn.text}</button>`
-        );
-      }
-    }
-    lines.push('');
+  if (pageData.hasSearch) {
+    blocks.push(searchBlock(pageData));
   }
 
   if (pageData.buttons.length > 0) {
-    lines.push('## Buttons & Clickable Elements');
-    for (const b of pageData.buttons.slice(0, 15)) {
-      const parts = [
-        b.ariaLabel ? `aria-label="${b.ariaLabel}"` : '',
-        b.testId ? `data-testid="${b.testId}"` : '',
-      ].filter(Boolean);
-      lines.push(`  <${b.tag}${parts.length ? ' ' + parts.join(', ') : ''}>${b.text}</${b.tag}>`);
-    }
-    lines.push('');
+    blocks.push(buttonsBlock(pageData));
   }
 
   if (pageData.links.length > 0) {
-    lines.push('## Navigation Links');
-    for (const l of pageData.links.slice(0, 15)) {
-      lines.push(`  [${l.text}] → ${l.href}`);
-    }
-    lines.push('');
+    blocks.push(linksBlock(pageData));
   }
 
-  lines.push('## Page Flags');
-  lines.push(`  Has authentication: ${pageData.hasAuth}`);
-  lines.push(`  Has search: ${pageData.hasSearch}`);
-  lines.push(`  Has pagination: ${pageData.hasPagination}`);
-  lines.push('');
+  blocks.push(`});`);
+  return blocks.join('\n');
+}
 
-  if (pageData.visibleText) {
-    lines.push('## Visible Page Text (excerpt)');
-    lines.push(pageData.visibleText.slice(0, 800));
-    lines.push('');
+function pageLoadBlock(pageData: PageData): string {
+  const lines = [
+    `  test('loads the page successfully', async ({ page }) => {`,
+    `    await expect(page).toHaveTitle(/${escapeRegex(pageData.title)}/i);`,
+    `    await expect(page.locator('body')).toBeVisible();`,
+  ];
+
+  if (pageData.headings.length > 0) {
+    const h = pageData.headings[0];
+    lines.push(
+      `    await expect(page.getByRole('heading', { name: /${escapeRegex(h.text)}/i }).first()).toBeVisible();`
+    );
   }
 
-  lines.push(
-    'Generate a complete Playwright TypeScript test file for this page. Cover all forms, interactive elements, and key user journeys.'
-  );
-
+  lines.push(`  });`, ``);
   return lines.join('\n');
+}
+
+function authBlock(pageData: PageData): string {
+  const form = pageData.forms[0];
+  const userField = form.fields.find(
+    f => f.type === 'text' || /user|email|login/.test(f.name + f.id)
+  );
+  const passField = form.fields.find(f => f.type === 'password');
+  const submit = form.submitButtons[0];
+
+  const userSel = userField ? fieldSelector(userField) : `page.locator('input[type="text"]').first()`;
+  const passSel = passField ? fieldSelector(passField) : `page.locator('input[type="password"]')`;
+  const btnSel = submit
+    ? (submit.testId
+        ? `page.locator('[data-testid="${submit.testId}"]')`
+        : `page.getByRole('button', { name: '${escStr(submit.text)}' })`)
+    : `page.getByRole('button', { name: /login|sign in/i })`;
+
+  return [
+    `  test.describe('authentication', () => {`,
+    `    test('shows login form elements', async ({ page }) => {`,
+    `      await expect(${userSel}).toBeVisible();`,
+    `      await expect(${passSel}).toBeVisible();`,
+    `      await expect(${btnSel}).toBeEnabled();`,
+    `    });`,
+    ``,
+    `    test('rejects empty credentials', async ({ page }) => {`,
+    `      await ${btnSel}.click();`,
+    `      await expect(page.locator('body')).toContainText(/required|error|invalid/i);`,
+    `    });`,
+    ``,
+    `    test('rejects invalid credentials', async ({ page }) => {`,
+    `      await ${userSel}.fill('invalid_user_123');`,
+    `      await ${passSel}.fill('wrong_password');`,
+    `      await ${btnSel}.click();`,
+    `      await expect(page.locator('body')).toContainText(/error|invalid|incorrect/i);`,
+    `    });`,
+    `  });`,
+    ``,
+  ].join('\n');
+}
+
+function searchBlock(pageData: PageData): string {
+  const field =
+    pageData.inputs.find(i => i.type === 'search' || i.name === 'q' || /search/i.test(i.placeholder)) ??
+    pageData.forms.flatMap(f => f.fields).find(f => f.type === 'search' || /search/i.test(f.placeholder));
+
+  const sel = field
+    ? fieldSelector(field)
+    : `page.locator('input[type="search"], input[name="q"]').first()`;
+
+  return [
+    `  test.describe('search', () => {`,
+    `    test('search input is present and interactive', async ({ page }) => {`,
+    `      await expect(${sel}).toBeVisible();`,
+    `      await ${sel}.fill('test query');`,
+    `      await ${sel}.press('Enter');`,
+    `    });`,
+    `  });`,
+    ``,
+  ].join('\n');
+}
+
+function buttonsBlock(pageData: PageData): string {
+  const lines = [`  test.describe('interactive elements', () => {`];
+
+  for (const btn of pageData.buttons.slice(0, 4)) {
+    if (!btn.text.trim()) continue;
+    const sel = btn.testId
+      ? `page.locator('[data-testid="${btn.testId}"]')`
+      : `page.getByRole('${btn.tag === 'a' ? 'link' : 'button'}', { name: '${escStr(btn.text.slice(0, 40))}' }).first()`;
+
+    lines.push(
+      `    test('"${escStr(btn.text.slice(0, 35))}" is visible and enabled', async ({ page }) => {`,
+      `      await expect(${sel}).toBeVisible();`,
+      `    });`,
+      ``
+    );
+  }
+
+  lines.push(`  });`, ``);
+  return lines.join('\n');
+}
+
+function linksBlock(pageData: PageData): string {
+  const lines = [
+    `  test.describe('navigation', () => {`,
+    `    test('key navigation links are present', async ({ page }) => {`,
+  ];
+
+  for (const link of pageData.links.filter(l => l.text.trim()).slice(0, 5)) {
+    lines.push(
+      `      await expect(page.getByRole('link', { name: '${escStr(link.text.slice(0, 40))}' }).first()).toBeVisible();`
+    );
+  }
+
+  lines.push(`    });`, `  });`, ``);
+  return lines.join('\n');
+}
+
+// ── Selector helpers ─────────────────────────────────────────────────────────
+
+function fieldSelector(field: Partial<FormField>): string {
+  if (field.testId) return `page.locator('[data-testid="${field.testId}"]')`;
+  if (field.id)     return `page.locator('#${field.id}')`;
+  if (field.ariaLabel) return `page.getByLabel('${escStr(field.ariaLabel)}')`;
+  if (field.placeholder) return `page.getByPlaceholder('${escStr(field.placeholder)}')`;
+  if (field.name)   return `page.locator('[name="${field.name}"]')`;
+  return `page.locator('input[type="${field.type ?? 'text'}"]').first()`;
+}
+
+function escStr(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 35);
 }
