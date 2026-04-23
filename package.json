@@ -1,0 +1,41 @@
+{
+  "name": "ai-test-generator",
+  "version": "1.0.0",
+  "description": "AI-powered Playwright test generator — analyze any URL and get runnable E2E tests using Claude",
+  "main": "dist/cli.js",
+  "bin": {
+    "ai-test-generator": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "ts-node src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "ai",
+    "claude",
+    "anthropic",
+    "test-generation",
+    "e2e",
+    "qa-automation"
+  ],
+  "author": "OssOIB",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@playwright/test": "^1.44.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
