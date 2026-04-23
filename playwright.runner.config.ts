@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Minimal config used by the CLI when running AI-generated tests
 export default defineConfig({
+  testDir: 'generated-tests',
   fullyParallel: false,
   retries: 0,
   workers: 1,

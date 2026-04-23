@@ -109,11 +109,11 @@ function authBlock(pageData: PageData): string {
 
   const userSel = userField ? fieldSelector(userField) : `page.locator('input[type="text"]').first()`;
   const passSel = passField ? fieldSelector(passField) : `page.locator('input[type="password"]')`;
-  const btnSel = submit
-    ? (submit.testId
-        ? `page.locator('[data-testid="${submit.testId}"]')`
-        : `page.getByRole('button', { name: '${escStr(submit.text)}' })`)
-    : `page.getByRole('button', { name: /login|sign in/i })`;
+  const btnSel = submit?.testId
+    ? `page.locator('[data-testid="${submit.testId}"]')`
+    : submit?.text
+      ? `page.getByRole('button', { name: '${escStr(submit.text)}' })`
+      : `page.locator('input[type="submit"], button[type="submit"]').first()`;
 
   return [
     `  test.describe('authentication', () => {`,

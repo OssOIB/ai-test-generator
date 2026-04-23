@@ -1,10 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 
 export function saveGeneratedTest(code: string, outputPath?: string): string {
+  // Default to generated-tests/ inside the project so the Playwright runner
+  // config (testDir: 'generated-tests') can discover the file without a glob.
+  const projectRoot = path.join(__dirname, '../../');
   const target = outputPath ?? path.join(
-    os.tmpdir(),
+    projectRoot,
+    'generated-tests',
     `ai-generated-${Date.now()}.spec.ts`
   );
 

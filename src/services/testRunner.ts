@@ -44,6 +44,8 @@ export function runTests(testFilePath: string): TestResult {
       cwd: projectRoot,
       env: { ...process.env },
       timeout: 120000,
+      // Required on Windows: npx is a .cmd file and won't be found without a shell
+      shell: true,
     }
   );
 
